@@ -1,0 +1,6 @@
+--extra-index-url https://download.pytorch.org/whl/cpu
+torch
+runpod
+requests
+beat-this
+setuptools==80.9.0
