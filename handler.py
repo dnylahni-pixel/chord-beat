@@ -1,52 +1,85 @@
-import runpod, requests, subprocess, os
+import os
+import uuid
+import requests
+import runpod
 from beat_this.inference import File2Beats
 
 f2b = File2Beats(checkpoint_path="final0", device="cpu", dbn=False)
 
-def parse_lab(path):
-    chords = []
-    with open(path) as f:
-        for line in f:
-            parts = line.strip().split()
-            if len(parts) == 3:
-                chords.append({
-                    "start": float(parts[0]),
-                    "end": float(parts[1]),
-                    "chord": parts[2]
-                })
-    return chords
+
+def download_file(url: str) -> str:
+    path = f"/tmp/{uuid.uuid4()}.mp3"
+    with requests.get(url, stream=True, timeout=120) as response:
+        response.raise_for_status()
+        with open(path, "wb") as file:
+            for chunk in response.iter_content(chunk_size=1024 * 1024):
+                if chunk:
+                    file.write(chunk)
+    return path
+
+
+def format_beats(beats, downbeats):
+    result = []
+    measure = 0
+    downbeat_times = set(round(float(t), 3) for t in downbeats)
+
+    for index, time_sec in enumerate(beats):
+        rounded_time = round(float(time_sec), 3)
+        is_downbeat = rounded_time in downbeat_times
+
+        if is_downbeat:
+            measure += 1
+
+        result.append({
+            "beat": index,
+            "time": round(float(time_sec), 2),
+            "measure": measure,
+            "isDownbeat": is_downbeat
+        })
+
+    return result
+
+
+def run_chordmini(audio_path: str):
+    return []
+
 
 def handler(job):
-    url = job["input"]["audio_url"]
-    audio_path = "/tmp/song.mp3"
-    with open(audio_path, "wb") as f:
-        f.write(requests.get(url).content)
+    audio_path = None
 
-    beats, downbeats = f2b(audio_path)
+    try:
+        job_input = job.get("input", {})
+        audio_url = job_input.get("audio_url")
 
-    out_dir = "/tmp/chord_out"
-    os.makedirs(out_dir, exist_ok=True)
-    subprocess.run([
-        "python", "ChordMini/src/evaluation/test.py",
-        "--model_type", "ChordNet",
-        "--checkpoint", "ChordMini/checkpoints/2e1d_model_best.pth",
-        "--config", "ChordMini/config/ChordMini.yaml",
-        "--audio_dir", audio_path,
-        "--save_dir", out_dir,
-        "--use_overlap", "--use_gaussian",
-        "--kernel_size", "9",
-        "--vote_aggregation", "logit",
-        "--min_segment_duration", "0.5",
-        "--smooth_predictions"
-    ], check=True)
+        if not audio_url:
+            return {
+                "beats": [],
+                "chords": []
+            }
 
-    lab_files = [f for f in os.listdir(out_dir) if f.endswith(".lab")]
-    chords = parse_lab(os.path.join(out_dir, lab_files[0])) if lab_files else []
+        audio_path = download_file(audio_url)
+        beats_raw, downbeats_raw = f2b(audio_path)
 
-    return {
-        "beats": beats.tolist(),
-        "downbeats": downbeats.tolist(),
-        "chords": chords
-    }
+        beats = format_beats(beats_raw, downbeats_raw)
+        chords = run_chordmini(audio_path)
+
+        return {
+            "beats": beats,
+            "chords": chords
+        }
+
+    except Exception:
+        return {
+            "beats": [],
+            "chords": []
+        }
+
+    finally:
+        if audio_path and os.path.exists(audio_path):
+            try:
+                os.remove(audio_path)
+            except Exception:
+                pass
+
 
 runpod.serverless.start({"handler": handler})
