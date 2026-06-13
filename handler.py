@@ -21,17 +21,21 @@ def download_file(url: str) -> str:
 def format_beats(beats, downbeats):
     result = []
     measure = 0
+    beat_in_measure = 0
     downbeat_times = set(round(float(t), 3) for t in downbeats)
 
-    for index, time_sec in enumerate(beats):
+    for time_sec in beats:
         rounded_time = round(float(time_sec), 3)
         is_downbeat = rounded_time in downbeat_times
 
         if is_downbeat:
             measure += 1
+            beat_in_measure = 1
+        else:
+            beat_in_measure += 1
 
         result.append({
-            "beat": index,
+            "beat": beat_in_measure,
             "time": round(float(time_sec), 2),
             "measure": measure,
             "isDownbeat": is_downbeat
