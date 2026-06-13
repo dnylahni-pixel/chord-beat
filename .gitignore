@@ -1,2 +1,4 @@
 
 ChordMini/
+__pycache__/
+*.pyc
