@@ -4,7 +4,24 @@ import requests
 import runpod
 from beat_this.inference import File2Beats
 
-f2b = File2Beats(checkpoint_path="final0", device="cpu", dbn=False)
+MODEL_CONFIGS = [
+    {"model_id": "final0", "checkpoint_path": "final0"},
+    {"model_id": "final1", "checkpoint_path": "final1"},
+    {"model_id": "final2", "checkpoint_path": "final2"},
+]
+
+MODELS = [
+    {
+        "model_id": config["model_id"],
+        "checkpoint_path": config["checkpoint_path"],
+        "runner": File2Beats(
+            checkpoint_path=config["checkpoint_path"],
+            device="cpu",
+            dbn=False,
+        ),
+    }
+    for config in MODEL_CONFIGS
+]
 
 
 def download_file(url: str) -> str:
@@ -18,34 +35,33 @@ def download_file(url: str) -> str:
     return path
 
 
-def format_beats(beats, downbeats):
-    result = []
-    measure = 0
-    beat_in_measure = 0
-    downbeat_times = set(round(float(t), 3) for t in downbeats)
+def serialize_events(events):
+    serialized = []
 
-    for time_sec in beats:
-        rounded_time = round(float(time_sec), 3)
-        is_downbeat = rounded_time in downbeat_times
+    for event in events:
+        serialized.append(float(event))
 
-        if is_downbeat:
-            measure += 1
-            beat_in_measure = 1
-        else:
-            beat_in_measure += 1
-
-        result.append({
-            "beat": beat_in_measure,
-            "time": round(float(time_sec), 2),
-            "measure": measure,
-            "isDownbeat": is_downbeat
-        })
-
-    return result
+    return serialized
 
 
 def run_chordmini(audio_path: str):
     return []
+
+
+def empty_response():
+    return {
+        "models": [
+            {
+                "model_id": config["model_id"],
+                "checkpoint_path": config["checkpoint_path"],
+                "dbn": False,
+                "beats": [],
+                "downbeats": [],
+            }
+            for config in MODEL_CONFIGS
+        ],
+        "chords": [],
+    }
 
 
 def handler(job):
@@ -56,27 +72,33 @@ def handler(job):
         audio_url = job_input.get("audio_url")
 
         if not audio_url:
-            return {
-                "beats": [],
-                "chords": []
-            }
+            return empty_response()
 
         audio_path = download_file(audio_url)
-        beats_raw, downbeats_raw = f2b(audio_path)
 
-        beats = format_beats(beats_raw, downbeats_raw)
+        models_output = []
+        for model in MODELS:
+            beats_raw, downbeats_raw = model["runner"](audio_path)
+
+            models_output.append(
+                {
+                    "model_id": model["model_id"],
+                    "checkpoint_path": model["checkpoint_path"],
+                    "dbn": False,
+                    "beats": serialize_events(beats_raw),
+                    "downbeats": serialize_events(downbeats_raw),
+                }
+            )
+
         chords = run_chordmini(audio_path)
 
         return {
-            "beats": beats,
-            "chords": chords
+            "models": models_output,
+            "chords": chords,
         }
 
     except Exception:
-        return {
-            "beats": [],
-            "chords": []
-        }
+        return empty_response()
 
     finally:
         if audio_path and os.path.exists(audio_path):
